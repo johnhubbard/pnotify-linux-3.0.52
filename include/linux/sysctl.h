@@ -80,6 +80,18 @@ enum
 	INOTIFY_MAX_QUEUED_EVENTS=3	/* max queued events per instance */
 };
 
+/* /proc/sys/fs/pnotify/ */
+enum
+{
+	PNOTIFY_MAX_USER_INSTANCES=1,	/* max instances per user */
+	PNOTIFY_MAX_USER_WATCHES=2,	/* max watches per user */
+	PNOTIFY_MAX_QUEUED_EVENTS=3,	/* max queued events per instance */
+	PNOTIFY_IS_ACTIVE=4,            /* if true, pnotify operates normally, otherwise, it is quiescent */
+	PNOTIFY_DEBUG_PRINT_LEVEL=5,	/* 0 == OFF, 1 == minimal, 2 or greater == full debug*/
+	PNOTIFY_MAJOR_VERSION=6,	/* read-only: build-time major version of pnotify */
+	PNOTIFY_MINOR_VERSION=7		/* read-only: build-time minor version of pnotify */
+};
+
 /* CTL_KERN names: */
 enum
 {

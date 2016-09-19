@@ -99,7 +99,7 @@ int __vfs_setxattr_noperm(struct dentry *dentry, const char *name,
 	if (inode->i_op->setxattr) {
 		error = inode->i_op->setxattr(dentry, name, value, size, flags);
 		if (!error) {
-			fsnotify_xattr(dentry);
+			fsnotify_xattr(dentry, NULL);
 			security_inode_post_setxattr(dentry, name, value,
 						     size, flags);
 		}
@@ -108,7 +108,7 @@ int __vfs_setxattr_noperm(struct dentry *dentry, const char *name,
 		error = security_inode_setsecurity(inode, suffix, value,
 						   size, flags);
 		if (!error)
-			fsnotify_xattr(dentry);
+			fsnotify_xattr(dentry, NULL);
 	}
 
 	return error;
@@ -244,7 +244,7 @@ vfs_removexattr(struct dentry *dentry, const char *name)
 	mutex_unlock(&inode->i_mutex);
 
 	if (!error)
-		fsnotify_xattr(dentry);
+		fsnotify_xattr(dentry, NULL);
 	return error;
 }
 EXPORT_SYMBOL_GPL(vfs_removexattr);

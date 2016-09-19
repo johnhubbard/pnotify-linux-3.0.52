@@ -121,6 +121,7 @@ void fsnotify_put_mark(struct fsnotify_mark *mark)
 void fsnotify_destroy_mark(struct fsnotify_mark *mark)
 {
 	struct fsnotify_group *group;
+	struct task_struct *task = NULL;
 	struct inode *inode = NULL;
 
 	spin_lock(&mark->lock);
@@ -142,6 +143,10 @@ void fsnotify_destroy_mark(struct fsnotify_mark *mark)
 		fsnotify_destroy_inode_mark(mark);
 	} else if (mark->flags & FSNOTIFY_MARK_FLAG_VFSMOUNT)
 		fsnotify_destroy_vfsmount_mark(mark);
+	else if (mark->flags & FSNOTIFY_MARK_FLAG_TASK) {
+		task = mark->t.task;
+		fsnotify_destroy_task_mark(mark);
+	}
 	else
 		BUG();
 
@@ -200,6 +205,9 @@ void fsnotify_set_mark_mask_locked(struct fsnotify_mark *mark, __u32 mask)
 
 	if (mark->flags & FSNOTIFY_MARK_FLAG_INODE)
 		fsnotify_set_inode_mark_mask_locked(mark, mask);
+	else if (mark->flags & FSNOTIFY_MARK_FLAG_TASK) {
+		fsnotify_set_task_mark_mask_locked(mark, mask);
+	}
 }
 
 void fsnotify_set_mark_ignored_mask_locked(struct fsnotify_mark *mark, __u32 mask)
@@ -216,12 +224,13 @@ void fsnotify_set_mark_ignored_mask_locked(struct fsnotify_mark *mark, __u32 mas
  */
 int fsnotify_add_mark(struct fsnotify_mark *mark,
 		      struct fsnotify_group *group, struct inode *inode,
-		      struct vfsmount *mnt, int allow_dups)
+		      struct vfsmount *mnt, struct task_struct *task,
+		      int allow_dups)
 {
 	int ret = 0;
 
 	BUG_ON(inode && mnt);
-	BUG_ON(!inode && !mnt);
+	BUG_ON(!inode && !mnt && !task);
 
 	/*
 	 * LOCKING ORDER!!!!
@@ -245,6 +254,10 @@ int fsnotify_add_mark(struct fsnotify_mark *mark,
 			goto err;
 	} else if (mnt) {
 		ret = fsnotify_add_vfsmount_mark(mark, group, mnt, allow_dups);
+		if (ret)
+			goto err;
+	} else if (task) {
+		ret = fsnotify_add_task_mark(mark, group, task, allow_dups);
 		if (ret)
 			goto err;
 	} else {

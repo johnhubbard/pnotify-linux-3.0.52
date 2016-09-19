@@ -4448,7 +4448,7 @@ static int ocfs2_vfs_reflink(struct dentry *old_dentry, struct inode *dir,
 	error = ocfs2_reflink(old_dentry, dir, new_dentry, preserve);
 	mutex_unlock(&inode->i_mutex);
 	if (!error)
-		fsnotify_create(dir, new_dentry);
+		fsnotify_create(dir, new_dentry, NULL);
 	return error;
 }
 /*

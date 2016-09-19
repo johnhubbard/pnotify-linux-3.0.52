@@ -848,6 +848,44 @@ static int copy_fs(unsigned long clone_flags, struct task_struct *tsk)
 	return 0;
 }
 
+static int copy_pnotify(unsigned long clone_flags, struct task_struct * tsk)
+{
+#ifdef CONFIG_PNOTIFY_USER
+	struct fsnotify_mark *mark;
+	struct hlist_node *pos, *n;
+
+	INIT_HLIST_HEAD(&tsk->pnotify_marks);
+
+	/* TODO: take a closer look at how the pnotify_mask is used, and
+	   whether it is actually doing anything useful. It was modeled
+	   after the inode->mask for inotify, but the two (inode and task
+	   monitoring) are not identical. */
+	tsk->pnotify_mask = current->pnotify_mask;
+
+	/* Copy the list from current to tsk */
+
+	/* TODO: originally I thought task_lock(current) would be appropriate
+	   here, but that deadlocks for some simple test cases. However, the
+	   current->pnotify_marks list is (slightly) exposed here to list
+	   corruption, so consider how this should be locked. */
+
+	/* TODO: cleanup: this does not need to be a _safe list operation: */
+	hlist_for_each_entry_safe(mark, pos, n, &current->pnotify_marks,
+				  t.t_list) {
+		pnotify_debug(PNOTIFY_DEBUG_LEVEL_VERBOSE,
+			      "%s: parent task %u, "
+			      "new task %u)\n",
+			      __func__, current->pid, tsk->pid);
+
+		pnotify_new_watch(mark->group, tsk->pid,
+				  pnotify_mask_to_arg(mark->mask));
+		pnotify_create_process_create_event(tsk, mark, mark->group);
+	}
+
+#endif
+	return 0;
+}
+
 static int copy_files(unsigned long clone_flags, struct task_struct * tsk)
 {
 	struct files_struct *oldf, *newf;
@@ -1373,6 +1411,10 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 	if (clone_flags & CLONE_THREAD)
 		threadgroup_fork_read_unlock(current);
 	perf_event_fork(p);
+
+	if ((retval = copy_pnotify(clone_flags, p)))
+		goto bad_fork_free_pid;
+
 	return p;
 
 bad_fork_free_pid:

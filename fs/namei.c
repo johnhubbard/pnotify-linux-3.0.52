@@ -1929,7 +1929,7 @@ void unlock_rename(struct dentry *p1, struct dentry *p2)
 }
 
 int vfs_create(struct inode *dir, struct dentry *dentry, int mode,
-		struct nameidata *nd)
+		struct nameidata *nd, struct path *path)
 {
 	int error = may_create(dir, dentry);
 
@@ -1945,7 +1945,7 @@ int vfs_create(struct inode *dir, struct dentry *dentry, int mode,
 		return error;
 	error = dir->i_op->create(dir, dentry, mode, nd);
 	if (!error)
-		fsnotify_create(dir, dentry);
+		fsnotify_create(dir, dentry, path);
 	return error;
 }
 
@@ -2170,7 +2170,7 @@ static struct file *do_last(struct nameidata *nd, struct path *path,
 		error = security_path_mknod(&nd->path, dentry, mode, 0);
 		if (error)
 			goto exit_mutex_unlock;
-		error = vfs_create(dir->d_inode, dentry, mode, nd);
+		error = vfs_create(dir->d_inode, dentry, mode, nd, &nd->path);
 		if (error)
 			goto exit_mutex_unlock;
 		mutex_unlock(&dir->d_inode->i_mutex);
@@ -2405,7 +2405,8 @@ fail:
 }
 EXPORT_SYMBOL_GPL(lookup_create);
 
-int vfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
+int vfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev,
+	      struct path *path)
 {
 	int error = may_create(dir, dentry);
 
@@ -2429,7 +2430,7 @@ int vfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 
 	error = dir->i_op->mknod(dir, dentry, mode, dev);
 	if (!error)
-		fsnotify_create(dir, dentry);
+		fsnotify_create(dir, dentry, path);
 	return error;
 }
 
@@ -2483,14 +2484,16 @@ SYSCALL_DEFINE4(mknodat, int, dfd, const char __user *, filename, int, mode,
 		goto out_drop_write;
 	switch (mode & S_IFMT) {
 		case 0: case S_IFREG:
-			error = vfs_create(nd.path.dentry->d_inode,dentry,mode,&nd);
+			error = vfs_create(nd.path.dentry->d_inode,dentry,mode,
+					   &nd, &nd.path);
 			break;
 		case S_IFCHR: case S_IFBLK:
 			error = vfs_mknod(nd.path.dentry->d_inode,dentry,mode,
-					new_decode_dev(dev));
+					new_decode_dev(dev), &nd.path);
 			break;
 		case S_IFIFO: case S_IFSOCK:
-			error = vfs_mknod(nd.path.dentry->d_inode,dentry,mode,0);
+			error = vfs_mknod(nd.path.dentry->d_inode,dentry,mode,0,
+					  &nd.path);
 			break;
 	}
 out_drop_write:
@@ -2510,7 +2513,8 @@ SYSCALL_DEFINE3(mknod, const char __user *, filename, int, mode, unsigned, dev)
 	return sys_mknodat(AT_FDCWD, filename, mode, dev);
 }
 
-int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
+int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode,
+	      struct path *path)
 {
 	int error = may_create(dir, dentry);
 
@@ -2527,7 +2531,7 @@ int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 
 	error = dir->i_op->mkdir(dir, dentry, mode);
 	if (!error)
-		fsnotify_mkdir(dir, dentry);
+		fsnotify_mkdir(dir, dentry, path);
 	return error;
 }
 
@@ -2555,7 +2559,7 @@ SYSCALL_DEFINE3(mkdirat, int, dfd, const char __user *, pathname, int, mode)
 	error = security_path_mkdir(&nd.path, dentry, mode);
 	if (error)
 		goto out_drop_write;
-	error = vfs_mkdir(nd.path.dentry->d_inode, dentry, mode);
+	error = vfs_mkdir(nd.path.dentry->d_inode, dentry, mode, &nd.path);
 out_drop_write:
 	mnt_drop_write(nd.path.mnt);
 out_dput:
@@ -2692,7 +2696,7 @@ SYSCALL_DEFINE1(rmdir, const char __user *, pathname)
 	return do_rmdir(AT_FDCWD, pathname);
 }
 
-int vfs_unlink(struct inode *dir, struct dentry *dentry)
+int vfs_unlink(struct inode *dir, struct dentry *dentry, struct path *path)
 {
 	int error = may_delete(dir, dentry, 0);
 
@@ -2717,7 +2721,7 @@ int vfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	/* We don't d_delete() NFS sillyrenamed files--they still exist. */
 	if (!error && !(dentry->d_flags & DCACHE_NFSFS_RENAMED)) {
-		fsnotify_link_count(dentry->d_inode);
+		fsnotify_link_count(dentry->d_inode, path);
 		d_delete(dentry);
 	}
 
@@ -2765,7 +2769,7 @@ static long do_unlinkat(int dfd, const char __user *pathname)
 		error = security_path_unlink(&nd.path, dentry);
 		if (error)
 			goto exit3;
-		error = vfs_unlink(nd.path.dentry->d_inode, dentry);
+		error = vfs_unlink(nd.path.dentry->d_inode, dentry, &nd.path);
 exit3:
 		mnt_drop_write(nd.path.mnt);
 	exit2:
@@ -2801,7 +2805,8 @@ SYSCALL_DEFINE1(unlink, const char __user *, pathname)
 	return do_unlinkat(AT_FDCWD, pathname);
 }
 
-int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname)
+int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname,
+		struct path *path)
 {
 	int error = may_create(dir, dentry);
 
@@ -2817,7 +2822,7 @@ int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname)
 
 	error = dir->i_op->symlink(dir, dentry, oldname);
 	if (!error)
-		fsnotify_create(dir, dentry);
+		fsnotify_create(dir, dentry, path);
 	return error;
 }
 
@@ -2849,7 +2854,7 @@ SYSCALL_DEFINE3(symlinkat, const char __user *, oldname,
 	error = security_path_symlink(&nd.path, dentry, from);
 	if (error)
 		goto out_drop_write;
-	error = vfs_symlink(nd.path.dentry->d_inode, dentry, from);
+	error = vfs_symlink(nd.path.dentry->d_inode, dentry, from, &nd.path);
 out_drop_write:
 	mnt_drop_write(nd.path.mnt);
 out_dput:
@@ -2868,7 +2873,8 @@ SYSCALL_DEFINE2(symlink, const char __user *, oldname, const char __user *, newn
 	return sys_symlinkat(oldname, AT_FDCWD, newname);
 }
 
-int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_dentry)
+int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_dentry,
+	     struct path *path)
 {
 	struct inode *inode = old_dentry->d_inode;
 	int error;
@@ -2905,7 +2911,7 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
 		error = dir->i_op->link(old_dentry, dir, new_dentry);
 	mutex_unlock(&inode->i_mutex);
 	if (!error)
-		fsnotify_link(dir, inode, new_dentry);
+		fsnotify_link(dir, inode, new_dentry, path);
 	return error;
 }
 
@@ -2964,7 +2970,8 @@ SYSCALL_DEFINE5(linkat, int, olddfd, const char __user *, oldname,
 	error = security_path_link(old_path.dentry, &nd.path, new_dentry);
 	if (error)
 		goto out_drop_write;
-	error = vfs_link(old_path.dentry, nd.path.dentry->d_inode, new_dentry);
+	error = vfs_link(old_path.dentry, nd.path.dentry->d_inode, new_dentry,
+			 &nd.path);
 out_drop_write:
 	mnt_drop_write(nd.path.mnt);
 out_dput:
@@ -3094,7 +3101,8 @@ out:
 }
 
 int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
-	       struct inode *new_dir, struct dentry *new_dentry)
+	       struct inode *new_dir, struct dentry *new_dentry,
+	       struct path *old_path, struct path *new_path)
 {
 	int error;
 	int is_dir = S_ISDIR(old_dentry->d_inode->i_mode);
@@ -3125,7 +3133,7 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		error = vfs_rename_other(old_dir,old_dentry,new_dir,new_dentry);
 	if (!error)
 		fsnotify_move(old_dir, new_dir, old_name, is_dir,
-			      new_dentry->d_inode, old_dentry);
+			      new_dentry->d_inode,old_dentry,old_path,new_path);
 	fsnotify_oldname_free(old_name);
 
 	return error;
@@ -3206,7 +3214,7 @@ SYSCALL_DEFINE4(renameat, int, olddfd, const char __user *, oldname,
 	if (error)
 		goto exit6;
 	error = vfs_rename(old_dir->d_inode, old_dentry,
-				   new_dir->d_inode, new_dentry);
+			   new_dir->d_inode,new_dentry,&oldnd.path,&newnd.path);
 exit6:
 	mnt_drop_write(oldnd.path.mnt);
 exit5:

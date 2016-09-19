@@ -504,7 +504,7 @@ int devpts_pty_new(struct inode *ptmx_inode, struct tty_struct *tty)
 	dentry = d_alloc_name(root, s);
 	if (dentry) {
 		d_add(dentry, inode);
-		fsnotify_create(root->d_inode, dentry);
+		fsnotify_create(root->d_inode, dentry, NULL);
 	} else {
 		iput(inode);
 		ret = -ENOMEM;

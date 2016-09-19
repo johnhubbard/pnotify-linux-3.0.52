@@ -8149,6 +8149,11 @@ void __init sched_init(void)
 	INIT_HLIST_HEAD(&init_task.preempt_notifiers);
 #endif
 
+#ifdef CONFIG_PNOTIFY_USER
+	INIT_HLIST_HEAD(&init_task.pnotify_marks);
+	init_task.pnotify_mask = 0;
+#endif
+
 #ifdef CONFIG_SMP
 	open_softirq(SCHED_SOFTIRQ, run_rebalance_domains);
 #endif

@@ -617,7 +617,7 @@ static int fanotify_add_vfsmount_mark(struct fsnotify_group *group,
 			return -ENOMEM;
 
 		fsnotify_init_mark(fsn_mark, fanotify_free_mark);
-		ret = fsnotify_add_mark(fsn_mark, group, NULL, mnt, 0);
+		ret = fsnotify_add_mark(fsn_mark, group, NULL, mnt, NULL, 0);
 		if (ret)
 			goto err;
 	}
@@ -660,7 +660,7 @@ static int fanotify_add_inode_mark(struct fsnotify_group *group,
 			return -ENOMEM;
 
 		fsnotify_init_mark(fsn_mark, fanotify_free_mark);
-		ret = fsnotify_add_mark(fsn_mark, group, inode, NULL, 0);
+		ret = fsnotify_add_mark(fsn_mark, group, inode, NULL, NULL, 0);
 		if (ret)
 			goto err;
 	}

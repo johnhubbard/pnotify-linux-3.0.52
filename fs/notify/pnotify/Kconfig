@@ -1,0 +1,21 @@
+config PNOTIFY_USER
+	bool "Pnotify support for userspace"
+	select ANON_INODES
+	select FSNOTIFY
+	select INOTIFY_USER
+	default y
+	---help---
+	  Say Y here to enable pnotify support for userspace,
+	  including the associated system calls.
+
+	  Pnotify is similar to inotify, but instead of monitoring directories,
+	  pnotify monitors any file or directory that a process, or any of its children,
+	  access.
+
+	  Events are read from the file
+	  descriptor, which is also select()- and poll()-able.
+
+	  For more information, see <file:Documentation/filesystems/inotify.txt>
+	  and <file:Documentation/filesystems/pnotify.txt>.
+
+	  If unsure, say Y.

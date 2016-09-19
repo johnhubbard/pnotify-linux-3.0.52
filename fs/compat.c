@@ -1141,9 +1141,9 @@ out:
 		kfree(iov);
 	if ((ret + (type == READ)) > 0) {
 		if (type == READ)
-			fsnotify_access(file);
+			fsnotify_access(file, ret);
 		else
-			fsnotify_modify(file);
+			fsnotify_modify(file, ret);
 	}
 	return ret;
 }

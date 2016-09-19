@@ -322,7 +322,7 @@ ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 		else
 			ret = do_sync_read(file, buf, count, pos);
 		if (ret > 0) {
-			fsnotify_access(file);
+			fsnotify_access(file, ret);
 			add_rchar(current, ret);
 		}
 		inc_syscr(current);
@@ -378,7 +378,7 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 		else
 			ret = do_sync_write(file, buf, count, pos);
 		if (ret > 0) {
-			fsnotify_modify(file);
+			fsnotify_modify(file, ret);
 			add_wchar(current, ret);
 		}
 		inc_syscw(current);
@@ -692,9 +692,9 @@ out:
 		kfree(iov);
 	if ((ret + (type == READ)) > 0) {
 		if (type == READ)
-			fsnotify_access(file);
+			fsnotify_access(file, ret);
 		else
-			fsnotify_modify(file);
+			fsnotify_modify(file, ret);
 	}
 	return ret;
 }

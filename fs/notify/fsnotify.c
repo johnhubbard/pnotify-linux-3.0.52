@@ -86,7 +86,8 @@ void __fsnotify_update_child_dentry_flags(struct inode *inode)
 }
 
 /* Notify this dentry's parent about a child's events. */
-int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
+int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask,
+		      struct path *pnotify_path)
 {
 	struct dentry *parent;
 	struct inode *p_inode;
@@ -110,10 +111,10 @@ int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
 
 		if (path)
 			ret = fsnotify(p_inode, mask, path, FSNOTIFY_EVENT_PATH,
-				       dentry->d_name.name, 0);
+				       dentry->d_name.name, 0, NULL, 0);
 		else
 			ret = fsnotify(p_inode, mask, dentry->d_inode, FSNOTIFY_EVENT_INODE,
-				       dentry->d_name.name, 0);
+				       dentry->d_name.name, 0, pnotify_path, 0);
 	}
 
 	dput(parent);
@@ -122,19 +123,36 @@ int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
 }
 EXPORT_SYMBOL_GPL(__fsnotify_parent);
 
+static inline int has_pnotify_tracking(struct task_struct * task)
+{
+	return !hlist_empty(&task->pnotify_marks);
+}
+
+
 static int send_to_group(struct inode *to_tell, struct vfsmount *mnt,
 			 struct fsnotify_mark *inode_mark,
 			 struct fsnotify_mark *vfsmount_mark,
+			 struct fsnotify_mark *task_mark,
 			 __u32 mask, void *data,
 			 int data_is, u32 cookie,
 			 const unsigned char *file_name,
-			 struct fsnotify_event **event)
+			 struct fsnotify_event **event,
+			 pid_t tgid, pid_t pid, pid_t ppid, 
+			 struct path *path, unsigned long status)
 {
 	struct fsnotify_group *group = NULL;
 	__u32 inode_test_mask = 0;
 	__u32 vfsmount_test_mask = 0;
+	__u32 task_test_mask = 0;
+	int is_pnotify_event;
 
-	if (unlikely(!inode_mark && !vfsmount_mark)) {
+	/* It is also correct to call has_pnotify_tracking() to determine if
+	 * this is a pnotify event, but that is wasteful, because it was done
+	 * in the calling code.
+	 */
+	is_pnotify_event = (pid != 0);
+
+	if (unlikely(!inode_mark && !vfsmount_mark && !is_pnotify_event)) {
 		BUG();
 		return 0;
 	}
@@ -167,6 +185,20 @@ static int send_to_group(struct inode *to_tell, struct vfsmount *mnt,
 			vfsmount_test_mask &= ~inode_mark->ignored_mask;
 	}
 
+	/* does the task mark tell us to do something? */
+	if (task_mark) {
+		group = task_mark->group;
+		task_test_mask = (mask & ~FS_EVENT_ON_CHILD);
+		task_test_mask &= task_mark->mask;
+		task_test_mask &= ~task_mark->ignored_mask;
+
+		/* Hack, to get past this for testing. Change the
+		   group->ops->handle_event() signature, to accept
+		   a task_mark, for the full fix. */
+
+		inode_mark = task_mark;
+	}
+
 	pr_debug("%s: group=%p to_tell=%p mnt=%p mask=%x inode_mark=%p"
 		 " inode_test_mask=%x vfsmount_mark=%p vfsmount_test_mask=%x"
 		 " data=%p data_is=%d cookie=%d event=%p\n",
@@ -174,7 +206,7 @@ static int send_to_group(struct inode *to_tell, struct vfsmount *mnt,
 		 inode_test_mask, vfsmount_mark, vfsmount_test_mask, data,
 		 data_is, cookie, *event);
 
-	if (!inode_test_mask && !vfsmount_test_mask)
+	if (!inode_test_mask && !vfsmount_test_mask && !task_test_mask)
 		return 0;
 
 	if (group->ops->should_send_event(group, to_tell, inode_mark,
@@ -184,8 +216,9 @@ static int send_to_group(struct inode *to_tell, struct vfsmount *mnt,
 
 	if (!*event) {
 		*event = fsnotify_create_event(to_tell, mask, data,
-						data_is, file_name,
-						cookie, GFP_KERNEL);
+					       data_is, file_name,
+					       cookie, GFP_KERNEL,
+					       tgid, pid, ppid, path, status);
 		if (!*event)
 			return -ENOMEM;
 	}
@@ -199,16 +232,20 @@ static int send_to_group(struct inode *to_tell, struct vfsmount *mnt,
  * notification event in whatever means they feel necessary.
  */
 int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
-	     const unsigned char *file_name, u32 cookie)
+	     const unsigned char *file_name, u32 cookie, struct path *pnotify_path, unsigned long status)
 {
-	struct hlist_node *inode_node = NULL, *vfsmount_node = NULL;
-	struct fsnotify_mark *inode_mark = NULL, *vfsmount_mark = NULL;
-	struct fsnotify_group *inode_group, *vfsmount_group;
+	struct hlist_node *inode_node = NULL, *vfsmount_node = NULL,*task_node = NULL;
+	struct fsnotify_mark *inode_mark = NULL, *vfsmount_mark = NULL,
+		*task_mark = NULL;
+	struct fsnotify_group *inode_group, *vfsmount_group, *task_group;
 	struct fsnotify_event *event = NULL;
 	struct vfsmount *mnt;
 	int idx, ret = 0;
+	int is_pnotify_event;
 	/* global tests shouldn't care about events on child only the specific event */
 	__u32 test_mask = (mask & ~FS_EVENT_ON_CHILD);
+
+	is_pnotify_event = has_pnotify_tracking(current);
 
 	if (data_is == FSNOTIFY_EVENT_PATH)
 		mnt = ((struct path *)data)->mnt;
@@ -217,12 +254,12 @@ int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
 
 	/*
 	 * if this is a modify event we may need to clear the ignored masks
-	 * otherwise return if neither the inode nor the vfsmount care about
-	 * this type of event.
+	 * otherwise return if neither the inode nor the vfsmount nor pnotify
+	 * care about this type of event.
 	 */
 	if (!(mask & FS_MODIFY) &&
 	    !(test_mask & to_tell->i_fsnotify_mask) &&
-	    !(mnt && test_mask & mnt->mnt_fsnotify_mask))
+	    !(mnt && test_mask & mnt->mnt_fsnotify_mask) && !is_pnotify_event)
 		return 0;
 
 	idx = srcu_read_lock(&fsnotify_mark_srcu);
@@ -237,6 +274,11 @@ int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
 		vfsmount_node = srcu_dereference(mnt->mnt_fsnotify_marks.first,
 						 &fsnotify_mark_srcu);
 		inode_node = srcu_dereference(to_tell->i_fsnotify_marks.first,
+					      &fsnotify_mark_srcu);
+	}
+
+	if (is_pnotify_event) {
+		task_node = srcu_dereference(current->pnotify_marks.first,
 					      &fsnotify_mark_srcu);
 	}
 
@@ -257,18 +299,23 @@ int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
 
 		if (inode_group > vfsmount_group) {
 			/* handle inode */
-			ret = send_to_group(to_tell, NULL, inode_mark, NULL, mask, data,
-					    data_is, cookie, file_name, &event);
+			ret = send_to_group(to_tell, NULL,
+					    inode_mark, NULL, NULL,
+					    mask, data, data_is, cookie,
+					    file_name, &event, 0, 0, 0, NULL, 0);
 			/* we didn't use the vfsmount_mark */
 			vfsmount_group = NULL;
 		} else if (vfsmount_group > inode_group) {
-			ret = send_to_group(to_tell, mnt, NULL, vfsmount_mark, mask, data,
-					    data_is, cookie, file_name, &event);
+			ret = send_to_group(to_tell, mnt,
+					    NULL, vfsmount_mark, NULL,
+					    mask, data, data_is, cookie,
+					    file_name, &event, 0, 0, 0, NULL, 0);
 			inode_group = NULL;
 		} else {
-			ret = send_to_group(to_tell, mnt, inode_mark, vfsmount_mark,
-					    mask, data, data_is, cookie, file_name,
-					    &event);
+			ret = send_to_group(to_tell, mnt,
+					    inode_mark, vfsmount_mark, NULL,
+					    mask, data, data_is, cookie,
+					    file_name, &event, 0, 0, 0, NULL, 0);
 		}
 
 		if (ret && (mask & ALL_FSNOTIFY_PERM_EVENTS))
@@ -282,6 +329,41 @@ int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
 							 &fsnotify_mark_srcu);
 	}
 	ret = 0;
+
+	while (is_pnotify_event && task_node)
+	{
+		pid_t tgid = current->tgid;
+		pid_t pid = current->pid;
+		pid_t ppid;
+
+		if (current->parent)
+			ppid = current->parent->pid;
+		else
+			ppid = 0;
+
+		pnotify_debug(PNOTIFY_DEBUG_LEVEL_VERBOSE,
+			      "%s: pnotify event (mask: 0x%0x) "
+			      "for task %u\n",
+			      __func__, mask, pid);
+
+		task_group = NULL;
+		task_mark = hlist_entry(srcu_dereference(task_node,
+							 &fsnotify_mark_srcu),
+					struct fsnotify_mark, t.t_list);
+		task_group = task_mark->group;
+
+		ret = send_to_group(to_tell, NULL,
+				    NULL, NULL, task_mark,
+				    mask, data, data_is, 0,
+				    file_name, &event, tgid, pid, ppid, pnotify_path, status);
+
+		if (ret && (mask & ALL_FSNOTIFY_PERM_EVENTS))
+			goto out;
+
+		if (task_group)
+			task_node = srcu_dereference(task_node->next,
+						     &fsnotify_mark_srcu);
+	}
 out:
 	srcu_read_unlock(&fsnotify_mark_srcu, idx);
 	/*

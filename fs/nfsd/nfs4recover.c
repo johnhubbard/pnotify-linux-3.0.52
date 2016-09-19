@@ -150,7 +150,7 @@ nfsd4_create_clid_dir(struct nfs4_client *clp)
 	status = mnt_want_write(rec_file->f_path.mnt);
 	if (status)
 		goto out_put;
-	status = vfs_mkdir(dir->d_inode, dentry, S_IRWXU);
+	status = vfs_mkdir(dir->d_inode, dentry, S_IRWXU, NULL);
 	mnt_drop_write(rec_file->f_path.mnt);
 out_put:
 	dput(dentry);

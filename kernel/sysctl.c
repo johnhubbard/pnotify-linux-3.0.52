@@ -138,6 +138,9 @@ static int ngroups_max = NGROUPS_MAX;
 #ifdef CONFIG_INOTIFY_USER
 #include <linux/inotify.h>
 #endif
+#ifdef CONFIG_PNOTIFY_USER
+#include <linux/pnotify.h>
+#endif
 #ifdef CONFIG_SPARC
 #include <asm/system.h>
 #endif
@@ -1475,6 +1478,13 @@ static struct ctl_table fs_table[] = {
 		.child		= inotify_table,
 	},
 #endif	
+#ifdef CONFIG_PNOTIFY_USER
+	{
+		.procname	= "pnotify",
+		.mode		= 0555,
+		.child		= pnotify_table,
+	},
+#endif
 #ifdef CONFIG_EPOLL
 	{
 		.procname	= "epoll",

@@ -158,7 +158,7 @@ static struct audit_parent *audit_init_parent(struct path *path)
 
 	fsnotify_init_mark(&parent->mark, audit_watch_free_mark);
 	parent->mark.mask = AUDIT_FS_WATCH;
-	ret = fsnotify_add_mark(&parent->mark, audit_watch_group, inode, NULL, 0);
+	ret = fsnotify_add_mark(&parent->mark, audit_watch_group, inode, NULL, NULL, 0);
 	if (ret < 0) {
 		audit_free_parent(parent);
 		return ERR_PTR(ret);

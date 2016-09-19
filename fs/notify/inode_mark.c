@@ -303,9 +303,9 @@ void fsnotify_unmount_inodes(struct list_head *list)
 			iput(need_iput_tmp);
 
 		/* for each watch, send FS_UNMOUNT and then remove it */
-		fsnotify(inode, FS_UNMOUNT, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
+		fsnotify(inode, FS_UNMOUNT, inode, FSNOTIFY_EVENT_INODE, NULL, 0, NULL, 0);
 
-		fsnotify_inode_delete(inode);
+		fsnotify_inode_delete(inode, NULL);
 
 		iput(inode);
 

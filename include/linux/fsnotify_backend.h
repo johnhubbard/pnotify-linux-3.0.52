@@ -159,6 +159,17 @@ struct fsnotify_group {
 			struct user_struct      *user;
 		} inotify_data;
 #endif
+#ifdef CONFIG_PNOTIFY_USER
+		struct pnotify_group_private_data {
+			spinlock_t	idr_lock;
+			struct idr      idr;
+			u32             last_wd;
+			struct fasync_struct    *fa;    /* async notification */
+			struct user_struct      *user;
+			spinlock_t	wd_pid_lock;
+			struct list_head wd_pid_list;
+		} pnotify_data;
+#endif
 #ifdef CONFIG_FANOTIFY
 		struct fanotify_group_private_data {
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
@@ -240,6 +251,15 @@ struct fsnotify_event {
 	size_t name_len;
 	struct pid *tgid;
 
+#ifdef CONFIG_PNOTIFY_USER
+	pid_t event_tgid;	/* tgid of the process that created the event */
+	pid_t event_pid;	/* pid of the process that created the event */
+	pid_t event_ppid;	/* ppid of the process that created the event */
+	__u64 event_jiffies;	/* timestamp when the event was created */
+	unsigned long event_inode_num;	/* inode number, if applicable */
+	signed long event_status;	/* event-dependent status */
+#endif
+
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
 	__u32 response;	/* userspace answer to question */
 #endif /* CONFIG_FANOTIFY_ACCESS_PERMISSIONS */
@@ -266,6 +286,16 @@ struct fsnotify_vfsmount_mark {
 };
 
 /*
+ * Task specific fields in an fsnotify_mark
+ */
+struct fsnotify_task_mark {
+	struct task_struct *task;	/* task this mark is associated with */
+	struct hlist_node t_list;	/* list of marks by task->pnotify_marks */
+        struct list_head free_t_list;	/* tmp list used when freeing this mark */
+        struct list_head bcast_t_list;	/* tmp list used when broadcasting events to this mark */
+};
+
+/*
  * a mark is simply an object attached to an in core inode which allows an
  * fsnotify listener to indicate they are either no longer interested in events
  * of a type matching mask or only interested in those events.
@@ -286,6 +316,7 @@ struct fsnotify_mark {
 	union {
 		struct fsnotify_inode_mark i;
 		struct fsnotify_vfsmount_mark m;
+		struct fsnotify_task_mark t;
 	};
 	struct list_head free_g_list;	/* tmp list used when freeing this mark */
 	__u32 ignored_mask;		/* events types to ignore */
@@ -294,19 +325,35 @@ struct fsnotify_mark {
 #define FSNOTIFY_MARK_FLAG_OBJECT_PINNED	0x04
 #define FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY	0x08
 #define FSNOTIFY_MARK_FLAG_ALIVE		0x10
-	unsigned int flags;		/* vfsmount or inode mark? */
+#define FSNOTIFY_MARK_FLAG_TASK			0x20
+	unsigned int flags;		/* vfsmount or inode or task mark? */
 	struct list_head destroy_list;
 	void (*free_mark)(struct fsnotify_mark *mark); /* called on final put+free */
 };
 
+#define PNOTIFY_DEBUG_LEVEL_MINIMAL		1
+#define PNOTIFY_DEBUG_LEVEL_VERBOSE		2
+#define PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS	3
+
 #ifdef CONFIG_FSNOTIFY
+
+#ifdef CONFIG_PNOTIFY_USER
+extern int pnotify_debug_print_level __read_mostly;
+
+#define pnotify_debug(level,fmt, ...) \
+	if(pnotify_debug_print_level >= level) \
+		printk(KERN_DEBUG pr_fmt(fmt), ##__VA_ARGS__)
+#else
+#define pnotify_debug(level,fmt, ...)
+#endif
 
 /* called from the vfs helpers */
 
 /* main fsnotify call to send events */
 extern int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
-		    const unsigned char *name, u32 cookie);
-extern int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask);
+		    const unsigned char *name, u32 cookie, struct path *path, unsigned long status);
+extern int __fsnotify_parent(struct path *path, struct dentry *dentry,
+			     __u32 mask, struct path *pnotify_path);
 extern void __fsnotify_inode_delete(struct inode *inode);
 extern void __fsnotify_vfsmount_delete(struct vfsmount *mnt);
 extern u32 fsnotify_get_cookie(void);
@@ -391,11 +438,18 @@ extern struct fsnotify_event *fsnotify_remove_notify_event(struct fsnotify_group
 extern void fsnotify_recalc_vfsmount_mask(struct vfsmount *mnt);
 /* run all marks associated with an inode and update inode->i_fsnotify_mask */
 extern void fsnotify_recalc_inode_mask(struct inode *inode);
+/* run all marks associated with a task and update task->pnotify_mask */
+extern void fsnotify_recalc_task_mask(struct task_struct * task);
+
 extern void fsnotify_init_mark(struct fsnotify_mark *mark, void (*free_mark)(struct fsnotify_mark *mark));
+
 /* find (and take a reference) to a mark associated with group and inode */
 extern struct fsnotify_mark *fsnotify_find_inode_mark(struct fsnotify_group *group, struct inode *inode);
 /* find (and take a reference) to a mark associated with group and vfsmount */
 extern struct fsnotify_mark *fsnotify_find_vfsmount_mark(struct fsnotify_group *group, struct vfsmount *mnt);
+extern struct fsnotify_mark *fsnotify_find_task_mark(struct fsnotify_group *group, struct task_struct *task);
+/* find (and take a reference) to a mark associated with group and vfsmount */
+
 /* copy the values from old into new */
 extern void fsnotify_duplicate_mark(struct fsnotify_mark *new, struct fsnotify_mark *old);
 /* set the ignored_mask of a mark */
@@ -404,13 +458,18 @@ extern void fsnotify_set_mark_ignored_mask_locked(struct fsnotify_mark *mark, __
 extern void fsnotify_set_mark_mask_locked(struct fsnotify_mark *mark, __u32 mask);
 /* attach the mark to both the group and the inode */
 extern int fsnotify_add_mark(struct fsnotify_mark *mark, struct fsnotify_group *group,
-			     struct inode *inode, struct vfsmount *mnt, int allow_dups);
+			     struct inode *inode, struct vfsmount *mnt,
+			     struct task_struct *task, int allow_dups);
 /* given a mark, flag it to be freed when all references are dropped */
 extern void fsnotify_destroy_mark(struct fsnotify_mark *mark);
+
 /* run all the marks in a group, and clear all of the vfsmount marks */
 extern void fsnotify_clear_vfsmount_marks_by_group(struct fsnotify_group *group);
 /* run all the marks in a group, and clear all of the inode marks */
 extern void fsnotify_clear_inode_marks_by_group(struct fsnotify_group *group);
+/* run all the marks in a group, and clear all of the task marks */
+extern void fsnotify_clear_task_marks_by_group(struct fsnotify_group *group);
+
 /* run all the marks in a group, and clear all of the marks where mark->flags & flags is true*/
 extern void fsnotify_clear_marks_by_group_flags(struct fsnotify_group *group, unsigned int flags);
 /* run all the marks in a group, and flag them to be freed */
@@ -423,7 +482,27 @@ extern void fsnotify_unmount_inodes(struct list_head *list);
 extern struct fsnotify_event *fsnotify_create_event(struct inode *to_tell, __u32 mask,
 						    void *data, int data_is,
 						    const unsigned char *name,
-						    u32 cookie, gfp_t gfp);
+						    u32 cookie, gfp_t gfp,
+						    pid_t tgid, pid_t pid, pid_t ppid,
+						    struct path *path_for_inode_events, signed long status);
+
+int pnotify_new_watch(struct fsnotify_group *group, u32 pid, u32 arg);
+u32 pnotify_mask_to_arg(__u32 mask);
+int pnotify_create_process_create_event(struct task_struct *task,
+					struct fsnotify_mark *fsn_mark,
+					struct fsnotify_group *group);
+
+int pnotify_create_process_exit_event(struct task_struct *task,
+				      struct fsnotify_mark *fsn_mark,
+				      struct fsnotify_group *group);
+
+int pnotify_create_annotate_event(struct task_struct *task,
+                                  struct fsnotify_mark *fsn_mark,
+				  struct fsnotify_group *group, char *msg);
+
+void fsnotify_clear_marks_by_task(struct task_struct *task);
+
+void fsnotify_destroy_task_mark(struct fsnotify_mark *mark);
 
 /* fanotify likes to change events after they are on lists... */
 extern struct fsnotify_event *fsnotify_clone_event(struct fsnotify_event *old_event);
@@ -432,13 +511,16 @@ extern int fsnotify_replace_event(struct fsnotify_event_holder *old_holder,
 
 #else
 
+#define pnotify_debug(level,fmt, ...)
+
 static inline int fsnotify(struct inode *to_tell, __u32 mask, void *data, int data_is,
-			   const unsigned char *name, u32 cookie)
+			   const unsigned char *name, u32 cookie, struct path *path, unsigned long status)
 {
 	return 0;
 }
 
-static inline int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
+static inline int __fsnotify_parent(struct path *path, struct dentry *dentry,
+				    __u32 mask, struct path *path)
 {
 	return 0;
 }

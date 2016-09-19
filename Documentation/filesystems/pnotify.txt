@@ -1,0 +1,123 @@
+------------------------------------------------------------------------------
+               pnotify: A process-based variation of inotify
+------------------------------------------------------------------------------
+pnotify:                John F. Hubbard <jhubbard@nvidia.com>      06 Nov 2011
+------------------------------------------------------------------------------
+
+Table of Contents
+-----------------
+
+  0    Introduction/Credits
+  1    User interface
+  2    Prototypes
+  3    TODO
+
+------------------------------------------------------------------------------
+0  Introduction/Credits
+------------------------------------------------------------------------------
+
+This is really just a minor variation on inotify, and in fact you'll notice that
+both the documentation and the source code have a certain amount of duplication.
+
+Please see also Documentation/filesystems/inotify.txt, for perspective.
+
+------------------------------------------------------------------------------
+1 User Interface
+------------------------------------------------------------------------------
+
+Pnotify is controlled by a few system calls and normal file I/O on a returned
+file descriptor.
+
+The first step in using pnotify is to initialise an pnotify instance:
+
+	int events_fd = pnotify_init ();
+
+Each instance is associated with a unique, ordered queue.
+
+Change events are managed by "watches".  A watch is an (object,mask) pair where
+the object is a process ID and the mask is a bit mask of one or more
+pnotify events that the application wishes to receive.  See <linux/inotify.h>
+for valid events.  A watch is referenced by a watch descriptor, or wd.
+
+Watches are added via the pid of the process that is to be watched.
+
+Watches on a pid will return events on any files that the process accesses.
+
+Adding a watch is simple:
+
+	int ret = pnotify_add_watch (events_fd, pid, mask, flags);
+
+Where "fd" is the return value from pnotify_init(), pid is the process ID of
+the object to watch, and mask is the watch mask (see <linux/inotify.h>), and
+flags controls process-related behavior: whether to track all threads in a
+process, and whether to track all forked children of a process.
+
+You can update an existing watch in the same manner, by passing in a new mask.
+
+An existing watch is removed via
+
+	int ret = pnotify_rm_watch (events_fd, pid);
+
+Events can be inserted into an existing event stream, via pnotify_annotate():
+
+	int ret = pnotify_annotate(pid, &pnotify_annotate_event);
+
+These annotations will not show up unless the pid is already being observed.
+
+Events are provided in the form of an pnotify_event structure that is read(2)
+from a given pnotify instance.  The filename is of dynamic length and follows
+the struct. It is of size len.  The filename is padded with null bytes to
+ensure proper alignment.  This padding is reflected in len.
+
+You can read multiple events by passing a large buffer, for example:
+
+	size_t len = read (events_fd, buf, BUF_LEN);
+
+Where "buf" is a pointer to an array of "pnotify_event" structures at least
+BUF_LEN bytes in size.  The above example will return as many events as are
+available and fit in BUF_LEN.
+
+Each pnotify instance fd is also select()- and poll()-able.
+
+You can find the size of the current event queue via the standard FIONREAD
+ioctl on the fd returned by pnotify_init().
+
+All watches are destroyed and cleaned up on close.
+
+------------------------------------------------------------------------------
+2  Prototypes
+------------------------------------------------------------------------------
+
+	int pnotify_init (void);
+	int pnotify_add_watch (int events_fd, u32 pid, u32 mask, u32 flags);
+	int pnotify_rm_watch (int events_fd, u32 pid);
+	int pnotify_annotate (u32 pid, char * buf, u32 buflen);
+
+------------------------------------------------------------------------------
+3  /proc interface
+------------------------------------------------------------------------------
+
+	/proc/sys/fs/pnotify:
+		debug_print_level (0 - 3, default is 0: off).
+		is_active (0 or 1. Default is 1: on).
+		major_version
+		minor_version
+		max_queued_events
+		max_user_instances
+		max_user_watches
+------------------------------------------------------------------------------
+4  Boot arguments
+------------------------------------------------------------------------------
+
+	The above /proc/sys/fs/pnotify has a default of 1 (on), which may be
+	overridden via kernel boot argument: pnotify_is_active. Example
+	of a grub entry:
+
+	kernel /vmlinux-etc-etc  pnotify_is_active=0
+
+------------------------------------------------------------------------------
+5  TODO
+------------------------------------------------------------------------------
+
+-- Finish this documentation, by following along the corresponding sections
+   of the inotify document: document by difference.

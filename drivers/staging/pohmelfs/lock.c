@@ -153,7 +153,7 @@ int pohmelfs_data_lock(struct pohmelfs_inode *pi, u64 start, u32 size, int type)
 		if (!err) {
 			struct dentry *dentry = d_find_alias(inode);
 			if (dentry) {
-				fsnotify_change(dentry, iattr.ia_valid);
+				fsnotify_change(dentry, iattr.ia_valid, NULL);
 				dput(dentry);
 			}
 		}

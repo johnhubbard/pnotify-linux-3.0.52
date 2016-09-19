@@ -81,7 +81,7 @@ static int dev_mkdir(const char *name, mode_t mode)
 
 	dentry = lookup_create(&nd, 1);
 	if (!IS_ERR(dentry)) {
-		err = vfs_mkdir(nd.path.dentry->d_inode, dentry, mode);
+		err = vfs_mkdir(nd.path.dentry->d_inode, dentry, mode,&nd.path);
 		if (!err)
 			/* mark as kernel-created inode */
 			dentry->d_inode->i_private = &dev_mnt;
@@ -169,7 +169,7 @@ int devtmpfs_create_node(struct device *dev)
 	dentry = lookup_create(&nd, 0);
 	if (!IS_ERR(dentry)) {
 		err = vfs_mknod(nd.path.dentry->d_inode,
-				dentry, mode, dev->devt);
+				dentry, mode, dev->devt, &nd.path);
 		if (!err) {
 			struct iattr newattrs;
 
@@ -212,8 +212,7 @@ static int dev_rmdir(const char *name)
 	if (!IS_ERR(dentry)) {
 		if (dentry->d_inode) {
 			if (dentry->d_inode->i_private == &dev_mnt)
-				err = vfs_rmdir(nd.path.dentry->d_inode,
-						dentry);
+				err = vfs_rmdir(nd.path.dentry->d_inode,dentry);
 			else
 				err = -EPERM;
 		} else {
@@ -321,7 +320,7 @@ int devtmpfs_delete_node(struct device *dev)
 				notify_change(dentry, &newattrs);
 				mutex_unlock(&dentry->d_inode->i_mutex);
 				err = vfs_unlink(nd.path.dentry->d_inode,
-						 dentry);
+						 dentry, &nd.path);
 				if (!err || err == -ENOENT)
 					deleted = 1;
 			}

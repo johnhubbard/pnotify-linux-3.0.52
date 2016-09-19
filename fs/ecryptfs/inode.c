@@ -165,6 +165,10 @@ ecryptfs_create_underlying_file(struct inode *lower_dir_inode,
 	struct vfsmount *vfsmount_save;
 	unsigned int flags_save;
 	int rc;
+	struct path local_path;
+
+	local_path.dentry = lower_dentry;
+	local_path.mnt = lower_mnt;
 
 	if (nd) {
 		dentry_save = nd->path.dentry;
@@ -174,7 +178,7 @@ ecryptfs_create_underlying_file(struct inode *lower_dir_inode,
 		nd->path.mnt = lower_mnt;
 		nd->flags &= ~LOOKUP_OPEN;
 	}
-	rc = vfs_create(lower_dir_inode, lower_dentry, mode, nd);
+	rc = vfs_create(lower_dir_inode, lower_dentry, mode, nd, &local_path);
 	if (nd) {
 		nd->path.dentry = dentry_save;
 		nd->path.mnt = vfsmount_save;
@@ -489,7 +493,7 @@ static int ecryptfs_link(struct dentry *old_dentry, struct inode *dir,
 	dget(lower_new_dentry);
 	lower_dir_dentry = lock_parent(lower_new_dentry);
 	rc = vfs_link(lower_old_dentry, lower_dir_dentry->d_inode,
-		      lower_new_dentry);
+		      lower_new_dentry, NULL);
 	if (rc || !lower_new_dentry->d_inode)
 		goto out_lock;
 	rc = ecryptfs_interpose(lower_new_dentry, new_dentry, dir->i_sb);
@@ -516,7 +520,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
 
 	dget(lower_dentry);
 	lower_dir_dentry = lock_parent(lower_dentry);
-	rc = vfs_unlink(lower_dir_inode, lower_dentry);
+	rc = vfs_unlink(lower_dir_inode, lower_dentry, NULL);
 	if (rc) {
 		printk(KERN_ERR "Error in vfs_unlink; rc = [%d]\n", rc);
 		goto out_unlock;
@@ -555,7 +559,7 @@ static int ecryptfs_symlink(struct inode *dir, struct dentry *dentry,
 	if (rc)
 		goto out_lock;
 	rc = vfs_symlink(lower_dir_dentry->d_inode, lower_dentry,
-			 encoded_symname);
+			 encoded_symname, NULL);
 	kfree(encoded_symname);
 	if (rc || !lower_dentry->d_inode)
 		goto out_lock;
@@ -580,7 +584,7 @@ static int ecryptfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 
 	lower_dentry = ecryptfs_dentry_to_lower(dentry);
 	lower_dir_dentry = lock_parent(lower_dentry);
-	rc = vfs_mkdir(lower_dir_dentry->d_inode, lower_dentry, mode);
+	rc = vfs_mkdir(lower_dir_dentry->d_inode, lower_dentry, mode, NULL);
 	if (rc || !lower_dentry->d_inode)
 		goto out;
 	rc = ecryptfs_interpose(lower_dentry, dentry, dir->i_sb);
@@ -628,7 +632,7 @@ ecryptfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 
 	lower_dentry = ecryptfs_dentry_to_lower(dentry);
 	lower_dir_dentry = lock_parent(lower_dentry);
-	rc = vfs_mknod(lower_dir_dentry->d_inode, lower_dentry, mode, dev);
+	rc = vfs_mknod(lower_dir_dentry->d_inode, lower_dentry, mode, dev,NULL);
 	if (rc || !lower_dentry->d_inode)
 		goto out;
 	rc = ecryptfs_interpose(lower_dentry, dentry, dir->i_sb);
@@ -674,7 +678,8 @@ ecryptfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 		goto out_lock;
 	}
 	rc = vfs_rename(lower_old_dir_dentry->d_inode, lower_old_dentry,
-			lower_new_dir_dentry->d_inode, lower_new_dentry);
+			lower_new_dir_dentry->d_inode, lower_new_dentry,
+			NULL, NULL);
 	if (rc)
 		goto out_lock;
 	if (target_inode)

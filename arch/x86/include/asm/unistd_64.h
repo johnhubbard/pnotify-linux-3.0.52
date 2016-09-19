@@ -682,6 +682,19 @@ __SYSCALL(__NR_sendmmsg, sys_sendmmsg)
 #define __NR_setns				308
 __SYSCALL(__NR_setns, sys_setns)
 
+#ifdef CONFIG_PNOTIFY_USER
+
+#define __NR_pnotify_init			309
+__SYSCALL(__NR_pnotify_init, sys_pnotify_init)
+#define __NR_pnotify_add_watch			310
+__SYSCALL(__NR_pnotify_add_watch, sys_pnotify_add_watch)
+#define __NR_pnotify_rm_watch			311
+__SYSCALL(__NR_pnotify_rm_watch, sys_pnotify_rm_watch)
+#define __NR_pnotify_annotate			312
+__SYSCALL(__NR_pnotify_annotate, sys_pnotify_annotate)
+
+#endif
+
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR
 #define __ARCH_WANT_OLD_STAT

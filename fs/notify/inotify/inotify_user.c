@@ -521,7 +521,7 @@ void inotify_ignored_and_remove_idr(struct fsnotify_mark *fsn_mark,
 
 	ignored_event = fsnotify_create_event(NULL, FS_IN_IGNORED, NULL,
 					      FSNOTIFY_EVENT_NONE, NULL, 0,
-					      GFP_NOFS);
+					      GFP_NOFS, 0, 0, 0, NULL, 0);
 	if (!ignored_event)
 		return;
 
@@ -653,7 +653,7 @@ static int inotify_new_watch(struct fsnotify_group *group,
 		goto out_err;
 
 	/* we are on the idr, now get on the inode */
-	ret = fsnotify_add_mark(&tmp_i_mark->fsn_mark, group, inode, NULL, 0);
+	ret = fsnotify_add_mark(&tmp_i_mark->fsn_mark, group, inode, NULL, NULL, 0);
 	if (ret) {
 		/* we failed to get on the inode, get off the idr */
 		inotify_remove_from_idr(group, tmp_i_mark);

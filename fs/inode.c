@@ -249,7 +249,7 @@ void __destroy_inode(struct inode *inode)
 {
 	BUG_ON(inode_has_buffers(inode));
 	security_inode_free(inode);
-	fsnotify_inode_delete(inode);
+	fsnotify_inode_delete(inode, NULL);
 #ifdef CONFIG_FS_POSIX_ACL
 	if (inode->i_acl && inode->i_acl != ACL_NOT_CACHED)
 		posix_acl_release(inode->i_acl);

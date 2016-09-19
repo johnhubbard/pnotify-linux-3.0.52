@@ -244,7 +244,7 @@ int notify_change(struct dentry * dentry, struct iattr * attr)
 		up_write(&dentry->d_inode->i_alloc_sem);
 
 	if (!error)
-		fsnotify_change(dentry, ia_valid);
+		fsnotify_change(dentry, ia_valid, NULL);
 
 	return error;
 }

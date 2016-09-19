@@ -32,6 +32,8 @@
  */
 
 #include <linux/fs.h>
+#include <linux/fs_struct.h>
+#include <linux/lglock.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -381,6 +383,84 @@ struct fsnotify_event *fsnotify_clone_event(struct fsnotify_event *old_event)
 	return event;
 }
 
+/* Taken directly from dcache.c: */
+static int prepend(char **buffer, int *buflen, const char *str, int namelen)
+{
+	*buflen -= namelen;
+	if (*buflen < 0)
+		return -ENAMETOOLONG;
+	*buffer -= namelen;
+	memcpy(*buffer, str, namelen);
+	return 0;
+}
+
+static int pnotify_fullpath_from_path(struct fsnotify_event *event,
+				      struct path *path_arg,
+				      struct inode *inode,
+				      const unsigned char *name)
+{
+	char *page = NULL, *second_page = NULL;
+	char *path_name = NULL;
+	char *pos = NULL;
+	int buflen = PAGE_SIZE;
+	int err  = 0;
+
+	pnotify_debug(PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS,
+		      "%s: event jiffies: 0x%0llx, mask 0x%0x, path: 0x%p,"
+		      "inode: 0x%p (event_inode_num: %lu), name: %s\n",
+		      __func__, event->event_jiffies, event->mask,
+		      path_arg, inode, event->event_inode_num,
+		      (char*)(name ? name : (const unsigned char*)"NULL"));
+
+	if (path_arg) {
+		page = (char *) __get_free_page(GFP_KERNEL);
+		if (!page)
+			return -ENOMEM;
+
+		path_name = d_path(path_arg, page, buflen);
+
+		if (IS_ERR(path_name)) {
+			pnotify_debug(PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS,
+				      "%s: dpath failed(1): %d (jiffies: 0x%llx, "
+				      "pid: %u, event_inode_num: %lu)\n",
+				      __func__, (int)(long)path_name,
+				      event->event_jiffies, event->event_pid,
+				      event->event_inode_num);
+			path_name = NULL;
+		}
+	}
+
+	if (name) {
+		second_page = (char *) __get_free_page(GFP_KERNEL);
+		if (!second_page) {
+			err = -ENOMEM;
+			goto out;
+		}
+		pos = second_page + PAGE_SIZE;
+		prepend(&pos, &buflen, "\0", 1);
+		prepend(&pos, &buflen, name, strlen(name));
+		if (path_name) {
+			prepend(&pos, &buflen, "/", 1);
+			prepend(&pos, &buflen, path_name, strlen(path_name));
+		}
+	}
+	else if (path_name)
+		pos = path_name;
+
+	if ( pos && strlen(pos)) {
+		event->file_name = kstrdup(pos, GFP_KERNEL);
+		event->name_len = strlen(event->file_name);
+	}
+
+out:
+	if (page)
+		free_page((unsigned long) page);
+	if (second_page)
+		free_page((unsigned long) second_page);
+
+	return err;
+}
+
 /*
  * fsnotify_create_event - Allocate a new event which will be sent to each
  * group's handle_event function if the group was interested in this
@@ -395,7 +475,9 @@ struct fsnotify_event *fsnotify_clone_event(struct fsnotify_event *old_event)
  */
 struct fsnotify_event *fsnotify_create_event(struct inode *to_tell, __u32 mask, void *data,
 					     int data_type, const unsigned char *name,
-					     u32 cookie, gfp_t gfp)
+					     u32 cookie, gfp_t gfp,
+					     pid_t tgid, pid_t pid, pid_t ppid,
+					     struct path *path_for_inode_events, signed long status)
 {
 	struct fsnotify_event *event;
 
@@ -408,7 +490,7 @@ struct fsnotify_event *fsnotify_create_event(struct inode *to_tell, __u32 mask, 
 
 	initialize_event(event);
 
-	if (name) {
+	if (!pid && name) { /* Keep previous inotify/fanotify behavior */
 		event->file_name = kstrdup(name, gfp);
 		if (!event->file_name) {
 			kmem_cache_free(fsnotify_event_cachep, event);
@@ -422,16 +504,61 @@ struct fsnotify_event *fsnotify_create_event(struct inode *to_tell, __u32 mask, 
 	event->to_tell = to_tell;
 	event->data_type = data_type;
 
+	event->event_tgid = tgid;
+	event->event_pid = pid;
+	event->event_ppid = ppid;
+	event->event_jiffies = get_jiffies_64();
+	event->event_status = status;
+	event->mask = mask;
+
 	switch (data_type) {
 	case FSNOTIFY_EVENT_PATH: {
 		struct path *path = data;
 		event->path.dentry = path->dentry;
 		event->path.mnt = path->mnt;
+		if (path && path->dentry && path->dentry->d_inode) {
+			event->event_inode_num = path->dentry->d_inode->i_ino;
+		}
 		path_get(&event->path);
+		if (pid) {
+			int result = pnotify_fullpath_from_path(event, path,
+								NULL, name);
+			if (result < 0) {
+				pnotify_debug(PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS,
+					      "%s: mask 0x%0x data_type=%d, "
+					      "FULL_PATH_FROM_PATH(1) FAILED, "
+					      "pid %u: %d\n", __func__, mask,
+					      data_type, pid, result);
+			}
+		}
 		break;
 	}
 	case FSNOTIFY_EVENT_INODE:
 		event->inode = data;
+		if (pid) {
+			if (event->inode) {
+				int result;
+				event->event_inode_num = event->inode->i_ino;
+				result = pnotify_fullpath_from_path(event,
+								    path_for_inode_events,
+								    to_tell,
+								    name);
+				if (result < 0) {
+					pnotify_debug(PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS,
+						      "%s: mask 0x%0x data_type=%d, "
+						      "FULL_PATH_FROM_PATH(2) FAILED, "
+						      "pid %u: %d\n", __func__, mask,
+						      data_type, pid, result);
+				}
+			}
+			else {
+				pnotify_debug(PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS,
+					      "%s: mask 0x%0x data_type=%d, "
+					      "FULL_PATH_FROM_PATH(3) SKIPPED, "
+					      "pid %u\n", __func__, mask,
+					      data_type, pid);
+			}
+		}
 		break;
 	case FSNOTIFY_EVENT_NONE:
 		event->inode = NULL;
@@ -442,7 +569,27 @@ struct fsnotify_event *fsnotify_create_event(struct inode *to_tell, __u32 mask, 
 		BUG();
 	}
 
-	event->mask = mask;
+	if (pid && (!event->file_name) && name) {
+		/* Typically we get here for PN_ANNOTATE events */
+		event->file_name = kstrdup(name, gfp);
+		if (!event->file_name) {
+			kmem_cache_free(fsnotify_event_cachep, event);
+			return NULL;
+		}
+		event->name_len = strlen(event->file_name);
+	}
+
+	if (pid && event->file_name) {
+		pnotify_debug(PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS,
+			      "%s: mask=0x%0x data_type=%d, filename=%s, "
+			      "pid %u\n",
+			      __func__, mask, data_type, event->file_name, pid);
+	} else if (pid) {
+		pnotify_debug(PNOTIFY_DEBUG_LEVEL_DEBUG_EVENTS,
+			      "%s: mask 0x%0x data_type=%d, filename=NULL, "
+			      "pid %u\n",
+			      __func__, mask, data_type, pid);
+	}
 
 	return event;
 }
@@ -454,7 +601,7 @@ __init int fsnotify_notification_init(void)
 
 	q_overflow_event = fsnotify_create_event(NULL, FS_Q_OVERFLOW, NULL,
 						 FSNOTIFY_EVENT_NONE, NULL, 0,
-						 GFP_KERNEL);
+						 GFP_KERNEL, 0, 0, 0, NULL, 0);
 	if (!q_overflow_event)
 		panic("unable to allocate fsnotify q_overflow_event\n");
 
