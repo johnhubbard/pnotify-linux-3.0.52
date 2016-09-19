@@ -51,6 +51,7 @@
 #include <linux/tracehook.h>
 #include <linux/kmod.h>
 #include <linux/fsnotify.h>
+#include <linux/pnotify.h>
 #include <linux/fs_struct.h>
 #include <linux/pipe_fs_i.h>
 #include <linux/oom.h>
@@ -1506,8 +1507,12 @@ static int do_execve_common(const char *filename,
 	free_bprm(bprm);
 	if (displaced)
 		put_files_struct(displaced);
-	return retval;
 
+#ifdef CONFIG_PNOTIFY_USER
+	pnotify_broadcast_event(current, PN_EXEC_CMD, filename);
+#endif
+
+	return retval;
 out:
 	if (bprm->mm) {
 		acct_arg_size(bprm, 0);

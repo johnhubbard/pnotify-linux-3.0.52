@@ -14,6 +14,7 @@
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/pagemap.h>
+#include <linux/pnotify.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -55,6 +56,19 @@ int vfs_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
 
 EXPORT_SYMBOL(vfs_getattr);
 
+#ifdef CONFIG_PNOTIFY_USER
+static inline void pnotify_stat(struct path* path) 
+{
+	struct inode *inode = path->dentry->d_inode;
+	__u32 mask = PN_STAT;
+
+	if (S_ISDIR(inode->i_mode))
+		mask |= FS_ISDIR;
+
+	fsnotify(inode, mask, path, FSNOTIFY_EVENT_PATH, NULL, 0, NULL, 0);
+}
+#endif
+
 int vfs_fstat(unsigned int fd, struct kstat *stat)
 {
 	struct file *f = fget_raw(fd);
@@ -62,6 +76,11 @@ int vfs_fstat(unsigned int fd, struct kstat *stat)
 
 	if (f) {
 		error = vfs_getattr(f->f_path.mnt, f->f_path.dentry, stat);
+#ifdef CONFIG_PNOTIFY_USER
+		if (!error) {
+		    pnotify_stat(&f->f_path);
+		}
+#endif
 		fput(f);
 	}
 	return error;
@@ -91,6 +110,11 @@ int vfs_fstatat(int dfd, const char __user *filename, struct kstat *stat,
 		goto out;
 
 	error = vfs_getattr(path.mnt, path.dentry, stat);
+#ifdef CONFIG_PNOTIFY_USER
+	if (!error) {
+	    pnotify_stat(&path);
+	}
+#endif
 	path_put(&path);
 out:
 	return error;

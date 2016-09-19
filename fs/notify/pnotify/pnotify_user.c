@@ -622,7 +622,7 @@ int pnotify_create_process_event(struct task_struct *task,
 				 struct fsnotify_mark *fsn_mark,
 				 struct fsnotify_group *group,
 				 u32 event_type,
-				 char *msg)
+				 const char *msg)
 {
 	struct pnotify_inode_mark *i_mark;
 	struct fsnotify_event *special_event, *notify_event;
@@ -675,18 +675,6 @@ skip_send_ignore:
 	return ret;
 }
 
-int pnotify_create_annotate_event(struct task_struct *task,
-                                  struct fsnotify_mark *fsn_mark,
-				  struct fsnotify_group *group, char *msg)
-{
-	pnotify_debug(PNOTIFY_DEBUG_LEVEL_VERBOSE,
-		      "%s: Entering: group: 0x%p, msg: %s\n",
-		      __func__, group, msg);
-
-	return pnotify_create_process_event(task, fsn_mark, group,
-					    PN_ANNOTATE, msg);
-}
-
 int pnotify_create_process_create_event(struct task_struct *task,
 					struct fsnotify_mark *fsn_mark,
 					struct fsnotify_group *group)
@@ -712,9 +700,9 @@ int pnotify_create_process_exit_event(struct task_struct *task,
 }
 
 /*
- * Given an task, send a PN_ANNOTATE to each observer of that task.
+ * Given an task, send an event (of type event_type) to each observer of that task.
  */
-int pnotify_broadcast_annotate(struct task_struct *task, char *msg)
+int pnotify_broadcast_event(struct task_struct *task, u32 event_type, const char *msg)
 {
 	struct fsnotify_mark *mark, *lmark;
 	struct hlist_node *pos, *n;
@@ -734,14 +722,16 @@ int pnotify_broadcast_annotate(struct task_struct *task, char *msg)
 
 	list_for_each_entry_safe(mark, lmark, &bcast_list, t.bcast_t_list) {
 		pnotify_debug(PNOTIFY_DEBUG_LEVEL_VERBOSE,
-			      "%s: Sending message (%s) to observer/mark: 0x%p"
+			      "%s: Sending event (0x%x) message (%s) to observer/mark: 0x%p"
 			      " (mark->mask:"
 			      " 0x%x) for task->pid: %u\n",
-			      __func__, msg, mark, mark->mask, task->pid);
+			      __func__, event_type,
+			      (char*)(msg ? msg : (const char*)""),
+			      mark, mark->mask, task->pid);
 
 		/* Just record the last error, if any, for the return value: */
-		lastret = pnotify_create_annotate_event(task, mark,
-							mark->group, msg);
+		lastret = pnotify_create_process_event(task, mark, 
+                                                       mark->group, event_type, msg);
 		if (lastret)
 			ret = lastret;
 		list_del_init(&mark->t.bcast_t_list);
@@ -1203,7 +1193,7 @@ SYSCALL_DEFINE3(pnotify_annotate, u32, pid, const char __user *, buf, u32, len)
 		      "%s: Preparing: pid: %u, msg: %s\n",
 		      __func__, pid, kernel_buf);
 
-	ret = pnotify_broadcast_annotate(task, kernel_buf);
+	ret = pnotify_broadcast_event(task, PN_ANNOTATE, kernel_buf);
 out:
 	if (task)
 		put_task_struct(task);
@@ -1238,7 +1228,7 @@ static int __init pnotify_user_setup(void)
 
 	pnotify_debug_print_level = 0;
 	pnotify_major_version = 1;
-	pnotify_minor_version = 2;
+	pnotify_minor_version = 3;
 
 	return 0;
 }
